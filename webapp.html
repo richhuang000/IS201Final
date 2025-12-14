@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pawn Race: Exploding Chess</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #2c2c2c;
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 { margin-bottom: 10px; color: #ff4444; text-shadow: 0 0 10px red; text-align: center; }
+        p { color: #bbb; margin-bottom: 20px; text-align: center; max-width: 600px; }
+
+        /* Full Screen Overlays (Setup & Game Over) */
+        .overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            font-size: 20px;
+            margin: 10px;
+            cursor: pointer;
+            background: #444;
+            color: white;
+            border: 2px solid #666;
+            border-radius: 5px;
+            transition: 0.2s;
+        }
+        .btn:hover { background: #666; border-color: #fff; }
+        .btn-primary { background-color: #ff4444; border-color: #ff0000; }
+        .btn-primary:hover { background-color: #cc0000; }
+        
+        .btn-group { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+
+        #game-container { display: flex; gap: 20px; margin-bottom: 20px; }
+
+        #board {
+            width: 560px;
+            height: 560px;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            border: 10px solid #444;
+            user-select: none;
+            position: relative;
+        }
+
+        .square {
+            width: 70px;
+            height: 70px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 50px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .white-square { background-color: #eeeed2; color: black; }
+        .black-square { background-color: #769656; color: black; }
+        
+        /* Win/Goal Zone Indicators */
+        .white-goal { border-top: 5px solid gold; box-sizing: border-box; }
+        .black-goal { border-bottom: 5px solid gold; box-sizing: border-box; }
+
+        /* Explosion Animation */
+        @keyframes boom {
+            0% { background-color: yellow; transform: scale(1); }
+            50% { background-color: red; transform: scale(1.2); }
+            100% { background-color: transparent; transform: scale(1); }
+        }
+        .exploding {
+            animation: boom 0.5s ease-out;
+            z-index: 10;
+        }
+
+        .selected { background-color: #baca44 !important; }
+        
+        .valid-move::after {
+            content: ''; width: 20px; height: 20px;
+            background-color: rgba(0,0,0,0.2); border-radius: 50%; position: absolute;
+        }
+        .valid-capture::after {
+            content: ''; width: 60px; height: 60px;
+            border: 4px solid rgba(255, 0, 0, 0.5); border-radius: 50%; position: absolute;
+        }
+
+        #turn-indicator {
+            padding: 10px 20px;
+            background: #444;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+        
+        #status {
+            height: 30px; 
+            color: orange; 
+            font-weight: bold; 
+            font-size: 1.2em;
+            margin-bottom: 50px;
+            text-align: center;
+        }
+    </style>
+<link rel="stylesheet" href="../styles/finallayoutstyle.css" />
+</head>
+<body>
+    <div id="setup-screen" class="overlay">
+        <a href="scratchchess.html" id="top">Back to chess page</a>
+        <h1 style="font-size: 50px;">IS THIS CHESS?</h1>
+        <p style="font-size: 0.9em; margin-top: -10px;">(Warning: Capturing causes explosions)</p>
+        
+        <h2>Select Game Mode</h2>
+        <div class="btn-group">
+            <button class="btn" onclick="startGame('pvc')">1 Player (vs Computer)</button>
+            <button class="btn" onclick="startGame('pvp')">2 Player (Human vs Human)</button>
+        </div>
+        <div id="color-choice" style="display:none; text-align: center;">
+            <h2>Choose Your Color</h2>
+            <div class="btn-group">
+                <button class="btn" onclick="setPlayerColor('white')">Play as White</button>
+                <button class="btn" onclick="setPlayerColor('black')">Play as Black</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-over-screen" class="overlay" style="display: none;">
+        <h1 id="game-over-title" style="font-size: 60px;">GAME OVER</h1>
+        <p id="game-over-message" style="font-size: 24px; color: white;">Winner Info</p>
+        <button class="btn btn-primary" onclick="returnToHome()">Return to Main Menu</button>
+    </div>
+
+    <h1>Pawn Race</h1>
+    <p>Reach the other side to win! Beware: Capturing pieces creates a 5x5 explosion.</p>
+    
+    <div id="turn-indicator">Current Turn: <span id="turn-text">White</span></div>
+
+    <div id="game-container">
+        <div style="position: relative;">
+            <div id="board"></div>
+        </div>
+    </div>
+
+    <div id="status"></div>
+
+<script>
+    const BOARD_SIZE = 8;
+    const boardElement = document.getElementById('board');
+    const turnText = document.getElementById('turn-text');
+    const statusText = document.getElementById('status');
+    const setupScreen = document.getElementById('setup-screen');
+    const colorChoiceDiv = document.getElementById('color-choice');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const gameOverTitle = document.getElementById('game-over-title');
+    const gameOverMessage = document.getElementById('game-over-message');
+
+    // Game Config
+    let gameMode = 'pvp'; 
+    let humanColor = 'white'; 
+    let computerColor = 'black';
+    let currentTurn = 'white';
+    let isGameOver = false;
+
+    const PIECES = {
+        w: { p: '♙' },
+        b: { p: '♟' }
+    };
+    
+    let boardState = [];
+
+    // --- SETUP ---
+
+    function startGame(mode) {
+        gameMode = mode;
+        if (mode === 'pvc') {
+            document.querySelector('.btn-group').style.display = 'none';
+            colorChoiceDiv.style.display = 'block';
+        } else {
+            setupScreen.style.display = 'none';
+            initBoard();
+        }
+    }
+
+    function setPlayerColor(color) {
+        humanColor = color;
+        computerColor = (color === 'white') ? 'black' : 'white';
+        setupScreen.style.display = 'none';
+        initBoard();
+        
+        if (humanColor === 'black') {
+            setTimeout(computerMove, 1000);
+        }
+    }
+
+    function returnToHome() {
+        gameOverScreen.style.display = 'none';
+        setupScreen.style.display = 'flex';
+        // Reset Setup Screen UI
+        document.querySelector('.btn-group').style.display = 'flex';
+        colorChoiceDiv.style.display = 'none';
+        
+        // Clear board visually
+        boardElement.innerHTML = '';
+        statusText.textContent = "";
+    }
+
+    function initBoard() {
+        // Initialize 8x8 board
+        boardState = Array(8).fill(null).map(() => Array(8).fill(null));
+
+        // Place pawns on Row 0 (Black) and Row 7 (White)
+        for(let c=0; c<8; c++) {
+            boardState[0][c] = 'p'; // Black
+            boardState[7][c] = 'P'; // White
+        }
+
+        currentTurn = 'white';
+        isGameOver = false;
+        renderBoard();
+        updateStatus("Game Started! Race to the end.");
+    }
+
+    // --- RENDERING ---
+
+    function renderBoard() {
+        boardElement.innerHTML = ''; 
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                const square = document.createElement('div');
+                square.classList.add('square');
+                square.classList.add((r + c) % 2 === 0 ? 'white-square' : 'black-square');
+                
+                // Visual hints for goal lines
+                if (r === 0) square.classList.add('white-goal'); 
+                if (r === 7) square.classList.add('black-goal'); 
+
+                square.dataset.r = r;
+                square.dataset.c = c;
+                
+                const pieceChar = boardState[r][c];
+                if (pieceChar) {
+                    const color = pieceChar === 'P' ? 'w' : 'b';
+                    square.textContent = PIECES[color]['p'];
+                    square.style.color = color === 'w' ? '#fff' : '#000';
+                    square.style.textShadow = color === 'w' ? '0 0 2px #000' : '0 0 2px #fff';
+                }
+
+                square.onclick = () => onSquareClick(r, c);
+                boardElement.appendChild(square);
+            }
+        }
+    }
+
+    let selectedSquare = null;
+
+    function onSquareClick(r, c) {
+        if (isGameOver) return;
+        if (gameMode === 'pvc' && currentTurn === computerColor) return;
+
+        if (selectedSquare && selectedSquare.r === r && selectedSquare.c === c) {
+            clearSelection();
+            return;
+        }
+
+        const clickedPiece = boardState[r][c];
+        const isWhitePiece = clickedPiece === 'P';
+        const isBlackPiece = clickedPiece === 'p';
+        const isOwnPiece = (currentTurn === 'white' && isWhitePiece) || (currentTurn === 'black' && isBlackPiece);
+
+        if (isOwnPiece) {
+            clearSelection();
+            selectedSquare = { r, c };
+            highlightSquare(r, c, 'selected');
+            showValidMoves(r, c);
+            return;
+        }
+
+        if (selectedSquare) {
+            if (isValidMove(selectedSquare.r, selectedSquare.c, r, c)) {
+                executeMove(selectedSquare.r, selectedSquare.c, r, c);
+            } else {
+                clearSelection();
+            }
+        }
+    }
+
+    // --- GAME LOGIC ---
+
+    function showGameOver(title, message) {
+        isGameOver = true;
+        gameOverTitle.textContent = title;
+        gameOverMessage.textContent = message;
+        // Small delay to let the final move render before the screen pops up
+        setTimeout(() => {
+            gameOverScreen.style.display = 'flex';
+        }, 500);
+    }
+
+    function executeMove(fromR, fromC, toR, toC) {
+        const piece = boardState[fromR][fromC];
+        const isCapture = boardState[toR][toC] !== null; 
+
+        // Move the piece
+        boardState[toR][toC] = piece;
+        boardState[fromR][fromC] = null;
+        
+        clearSelection();
+        renderBoard(); 
+
+        const isWhite = piece === 'P';
+        
+        // 1. CHECK WIN CONDITION (Reached End)
+        if ((isWhite && toR === 0) || (!isWhite && toR === 7)) {
+            let winner = isWhite ? "WHITE" : "BLACK";
+            updateStatus("🏆 " + winner + " WINS! 🏆");
+            showGameOver(winner + " WINS!", "Reached the end of the board!");
+            return; 
+        }
+
+        // 2. CHECK EXPLOSION (Only on capture)
+        if (isCapture) {
+            updateStatus("💣 Exploded due to Capture!");
+            setTimeout(() => triggerExplosion(toR, toC), 300);
+        } else {
+            switchTurn();
+        }
+    }
+
+    function triggerExplosion(centerR, centerC) {
+        const radius = 2; // 5x5 area
+
+        // Visual Effect
+        for (let r = centerR - radius; r <= centerR + radius; r++) {
+            for (let c = centerC - radius; c <= centerC + radius; c++) {
+                if (r >= 0 && r < 8 && c >= 0 && c < 8) {
+                    const idx = r * 8 + c; 
+                    if(boardElement.children[idx]) boardElement.children[idx].classList.add('exploding');
+                }
+            }
+        }
+
+        // Logic Effect
+        setTimeout(() => {
+            for (let r = centerR - radius; r <= centerR + radius; r++) {
+                for (let c = centerC - radius; c <= centerC + radius; c++) {
+                    if (r >= 0 && r < 8 && c >= 0 && c < 8) {
+                        boardState[r][c] = null; // VAPORIZE
+                    }
+                }
+            }
+            renderBoard();
+            
+            // Check secondary win (Elimination)
+            if (!checkEliminationWin()) {
+                switchTurn();
+            }
+        }, 500);
+    }
+
+    function checkEliminationWin() {
+        let whiteCount = 0;
+        let blackCount = 0;
+        
+        for(let r=0; r<8; r++){
+            for(let c=0; c<8; c++){
+                if(boardState[r][c] === 'P') whiteCount++;
+                if(boardState[r][c] === 'p') blackCount++;
+            }
+        }
+
+        if (whiteCount === 0 && blackCount === 0) {
+            updateStatus("MUTUAL DESTRUCTION!");
+            showGameOver("DRAW", "Everyone was destroyed.");
+            return true;
+        } else if (whiteCount === 0) {
+            updateStatus("BLACK WINS!");
+            showGameOver("BLACK WINS!", "All White pieces eliminated.");
+            return true;
+        } else if (blackCount === 0) {
+            updateStatus("WHITE WINS!");
+            showGameOver("WHITE WINS!", "All Black pieces eliminated.");
+            return true;
+        }
+        return false;
+    }
+
+    function switchTurn() {
+        currentTurn = currentTurn === 'white' ? 'black' : 'white';
+        turnText.textContent = currentTurn.charAt(0).toUpperCase() + currentTurn.slice(1);
+        updateStatus("");
+
+        if (gameMode === 'pvc' && currentTurn === computerColor && !isGameOver) {
+            setTimeout(computerMove, 800);
+        }
+    }
+
+    // --- AI ---
+
+    function computerMove() {
+        if(isGameOver) return;
+
+        let allMoves = [];
+        
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                const piece = boardState[r][c];
+                if ((computerColor === 'white' && piece === 'P') || 
+                    (computerColor === 'black' && piece === 'p')) {
+                    
+                    const moves = getValidMoves(r, c);
+                    moves.forEach(m => {
+                        allMoves.push({ fromR: r, fromC: c, toR: m.r, toC: m.c });
+                    });
+                }
+            }
+        }
+
+        if (allMoves.length === 0) {
+            switchTurn();
+            return;
+        }
+
+        // AI Strategy
+        let winningMoves = allMoves.filter(m => (computerColor === 'white' && m.toR === 0) || (computerColor === 'black' && m.toR === 7));
+        
+        if (winningMoves.length > 0) {
+             executeMove(winningMoves[0].fromR, winningMoves[0].fromC, winningMoves[0].toR, winningMoves[0].toC);
+             return;
+        }
+
+        let captureMoves = allMoves.filter(m => boardState[m.toR][m.toC] !== null);
+        let forwardMoves = allMoves.sort((a, b) => {
+            if (computerColor === 'white') return a.toR - b.toR;
+            else return b.toR - a.toR;
+        });
+
+        let bestMove = null;
+        if (captureMoves.length > 0 && Math.random() < 0.4) {
+            bestMove = captureMoves[Math.floor(Math.random() * captureMoves.length)];
+        } else {
+            bestMove = forwardMoves[0];
+        }
+
+        executeMove(bestMove.fromR, bestMove.fromC, bestMove.toR, bestMove.toC);
+    }
+
+    // --- MOVEMENT HELPERS ---
+
+    function highlightSquare(r, c, className) {
+        const index = r * 8 + c;
+        if(boardElement.children[index]) boardElement.children[index].classList.add(className);
+    }
+
+    function clearSelection() {
+        selectedSquare = null;
+        const squares = document.querySelectorAll('.square');
+        squares.forEach(sq => {
+            sq.classList.remove('selected');
+            sq.classList.remove('valid-move');
+            sq.classList.remove('valid-capture');
+        });
+    }
+
+    function showValidMoves(r, c) {
+        const moves = getValidMoves(r, c);
+        moves.forEach(m => {
+            const isCapture = boardState[m.r][m.c] !== null;
+            highlightSquare(m.r, m.c, isCapture ? 'valid-capture' : 'valid-move');
+        });
+    }
+
+    function getValidMoves(r, c) {
+        const piece = boardState[r][c];
+        if (!piece) return [];
+        const moves = [];
+        const isWhite = piece === 'P';
+        
+        const dir = isWhite ? -1 : 1;
+        const startRow = isWhite ? 7 : 0; 
+        
+        // 1. Forward 1
+        if (r+dir >=0 && r+dir < 8 && boardState[r + dir][c] === null) {
+            moves.push({r: r + dir, c: c});
+            // 2. Forward 2
+            if (r === startRow && boardState[r + dir * 2][c] === null) {
+                moves.push({r: r + dir * 2, c: c});
+            }
+        }
+        
+        // 3. Capture
+        [[r + dir, c - 1], [r + dir, c + 1]].forEach(([nr, nc]) => {
+            if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                const target = boardState[nr][nc];
+                if (target) {
+                    const isTargetWhite = target === 'P';
+                    if (isWhite !== isTargetWhite) moves.push({r: nr, c: nc});
+                }
+            }
+        });
+
+        return moves;
+    }
+
+    function isValidMove(fromR, fromC, toR, toC) {
+        const moves = getValidMoves(fromR, fromC);
+        return moves.some(m => m.r === toR && m.c === toC);
+    }
+
+    function updateStatus(msg) {
+        statusText.textContent = msg;
+    }
+
+</script>
+</body>
+</html>
